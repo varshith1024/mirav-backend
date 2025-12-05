@@ -9,7 +9,7 @@ import { authenticate } from './middleware/auth.middleware.js';
 dotenv.config();
 const app = express();
 
-app.use(cors({ origin: "https://mirav-nu.vercel.app/", credentials: true }));
+app.use(cors({ origin: "https://mirav-nu.vercel.app", credentials: true }));
 app.use(express.json());
 
 // health + DB test
