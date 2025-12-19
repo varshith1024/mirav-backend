@@ -1,19 +1,20 @@
 import express from "express";
 import pool from "../db/index.js";
-import puppeteer from "puppeteer";
+import puppeteer from "puppeteer-core";
+import chromium from "@sparticuz/chromium";
 
 const router = express.Router();
 
-/* =================================
-   UTILITY: Generate Volunteer ID
-================================= */
+/* ================================
+   Generate Volunteer ID
+================================ */
 function generateVolunteerId(id) {
   return `SECT-VOL-${new Date().getFullYear()}-${String(id).padStart(4, "0")}`;
 }
 
-/* =================================
-   1️⃣ SUBMIT VOLUNTEER FORM
-================================= */
+/* ================================
+   SUBMIT VOLUNTEER FORM
+================================ */
 router.post("/submit-volunteer", async (req, res) => {
   try {
     const {
@@ -23,14 +24,13 @@ router.post("/submit-volunteer", async (req, res) => {
       occupation,
       interests,
       availability,
-      skills
+      skills,
     } = req.body;
 
     if (!fullName || !email || !phone || !availability) {
       return res.status(400).json({ error: "Required fields missing" });
     }
 
-    // Insert volunteer
     const result = await pool.query(
       `INSERT INTO volunteers
        (full_name, email, phone, occupation, interests, availability, skills)
@@ -42,7 +42,6 @@ router.post("/submit-volunteer", async (req, res) => {
     const dbId = result.rows[0].id;
     const volunteerId = generateVolunteerId(dbId);
 
-    // Store FULL ID in DB
     await pool.query(
       `UPDATE volunteers SET volunteer_id=$1 WHERE id=$2`,
       [volunteerId, dbId]
@@ -50,19 +49,17 @@ router.post("/submit-volunteer", async (req, res) => {
 
     res.status(201).json({
       success: true,
-      volunteer_id: volunteerId, // frontend will shorten
-      message: "Volunteer registered successfully"
+      volunteer_id: volunteerId,
     });
-
   } catch (err) {
     console.error("Volunteer submit error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-/* =================================
-   2️⃣ DOWNLOAD VIRTUAL ID (PDF)
-================================= */
+/* ================================
+   DOWNLOAD VIRTUAL ID PDF
+================================ */
 router.get("/id-card/:volunteerId", async (req, res) => {
   try {
     const { volunteerId } = req.params;
@@ -77,11 +74,8 @@ router.get("/id-card/:volunteerId", async (req, res) => {
     }
 
     const v = result.rows[0];
-
-    // ✅ SHORT ID FOR DISPLAY ONLY
     const shortId = v.volunteer_id.split("-").pop();
 
-    // 🔹 HTML MATCHING FRONTEND CARD EXACTLY
     const html = `
     <!DOCTYPE html>
     <html>
@@ -92,13 +86,13 @@ router.get("/id-card/:volunteerId", async (req, res) => {
     <body class="flex items-center justify-center min-h-screen bg-white">
       <div class="w-80 bg-white rounded-xl shadow-lg border-2 border-amber-700 overflow-hidden">
         
-        <!-- Header -->
         <div class="bg-green-100 py-3 px-3 flex items-center gap-3">
           <div class="w-14 h-14">
-            <img src="https://mirav-nu.vercel.app/logo.png" class="w-full h-full object-contain"/>
+            <img src="https://mirav-nu.vercel.app/logo.png"
+                 class="w-full h-full object-contain"/>
           </div>
           <div>
-            <h2 class="text-amber-800 text-base font-semibold leading-tight">
+            <h2 class="text-amber-800 text-base font-semibold">
               Sri Ekadanta Charitable Trust
             </h2>
             <p class="text-green-700 text-sm">
@@ -107,28 +101,19 @@ router.get("/id-card/:volunteerId", async (req, res) => {
           </div>
         </div>
 
-        <!-- Body -->
         <div class="p-4 flex flex-col items-center">
           <img
-            src="${v.photo_url || "https://via.placeholder.com/120"}"
-            class="w-28 h-28 rounded-full border-4 border-stone-600 mb-3 object-cover"
+            src="https://via.placeholder.com/120"
+            class="w-28 h-28 rounded-full border-4 border-stone-600 mb-3"
           />
-
-          <h3 class="text-lg font-semibold text-stone-700">
-            ${v.full_name}
-          </h3>
-
-          <p class="text-sm text-gray-500 mb-3">
-            ID: ${shortId}
-          </p>
-
+          <h3 class="text-lg font-semibold text-stone-700">${v.full_name}</h3>
+          <p class="text-sm text-gray-500 mb-3">ID: ${shortId}</p>
           <div class="text-sm text-gray-700 w-full space-y-1">
             <p><strong>Email:</strong> ${v.email}</p>
             <p><strong>Phone:</strong> ${v.phone}</p>
           </div>
         </div>
 
-        <!-- Footer -->
         <div class="bg-gray-100 text-center py-2 text-xs text-gray-600">
           Authorized Volunteer • Trust Verified
         </div>
@@ -138,20 +123,18 @@ router.get("/id-card/:volunteerId", async (req, res) => {
     `;
 
     const browser = await puppeteer.launch({
-      headless: "new",
-      args: ["--no-sandbox", "--disable-setuid-sandbox"]
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
     });
 
     const page = await browser.newPage();
-
-    await page.setContent(html, {
-      waitUntil: "domcontentloaded",
-      timeout: 0
-    });
+    await page.setContent(html, { waitUntil: "networkidle0" });
 
     const pdf = await page.pdf({
       format: "A6",
-      printBackground: true
+      printBackground: true,
     });
 
     await browser.close();
@@ -159,11 +142,10 @@ router.get("/id-card/:volunteerId", async (req, res) => {
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename=${shortId}.pdf`
+      `attachment; filename=VOL-${shortId}.pdf`
     );
 
     res.send(pdf);
-
   } catch (err) {
     console.error("PDF error:", err);
     res.status(500).json({ error: "Failed to generate ID card" });
