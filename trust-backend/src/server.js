@@ -5,13 +5,14 @@ import dotenv from 'dotenv';
 import authRoutes from './routes/auth.routes.js';
 import  pool  from './db/index.js';
 import { authenticate } from './middleware/auth.middleware.js';
-
+import volunteerRoutes from "./routes/volunteer.routes.js";
+import beneficiaryRoutes from "./routes/beneficiary.routes.js";
 dotenv.config();
 const app = express();
 
 app.use(cors({ origin: "https://mirav-nu.vercel.app", credentials: true }));
 app.use(express.json());
-
+app.use("/api/volunteer", volunteerRoutes);
 // health + DB test
 app.get('/', async (req, res) => {
   try {
@@ -25,6 +26,8 @@ app.get('/', async (req, res) => {
 
 // mount auth routes
 app.use('/api/auth', authRoutes);
+app.use("/api/volunteer", volunteerRoutes);
+app.use("/api/beneficiary", beneficiaryRoutes);
 
 // protected example route
 app.get('/api/protected', authenticate, (req, res) => {
