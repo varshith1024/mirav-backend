@@ -1,0 +1,10 @@
+# ignore all environment files
+.env
+*.env
+
+# ignore backend env inside subfolder
+trust-backend/.env
+
+# ignore node modules
+node_modules/
+trust-backend/node_modules/
