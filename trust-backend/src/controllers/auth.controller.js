@@ -73,22 +73,120 @@ export const login = async (req, res) => {
 };
 
 export const refreshToken = async (req, res) => {
+  const client = await pool.connect();
+
   try {
     const { token } = req.body;
-    if (!token) return res.status(400).json({ error: 'Refresh token required' });
 
-    const payload = await verifyRefreshToken(token); // will throw if invalid
-    // payload: { userId, iat, exp }
-    // issue new tokens
-    const accessToken = signAccessToken({ userId: payload.userId });
-    const refresh = await signRefreshToken(payload.userId); // rotate
-    res.json({ accessToken, refreshToken: refresh });
+    if (!token) {
+      return res.status(400).json({
+        error: "Refresh token required"
+      });
+    }
+
+    // 1. Verify JWT signature + expiration
+    const payload = await verifyRefreshToken(token);
+
+    await client.query("BEGIN");
+
+    // 2. Find the refresh token in DB
+    const { rows } = await client.query(
+      `SELECT user_id, expires_at
+       FROM refresh_tokens
+       WHERE token = $1
+       FOR UPDATE`,
+      [token]
+    );
+
+    if (rows.length === 0) {
+      await client.query("ROLLBACK");
+
+      return res.status(401).json({
+        error: "Invalid refresh token"
+      });
+    }
+
+    const storedToken = rows[0];
+
+    // 3. Make sure token belongs to same user
+    if (String(storedToken.user_id) !== String(payload.userId)) {
+      await client.query("ROLLBACK");
+
+      return res.status(401).json({
+        error: "Invalid refresh token"
+      });
+    }
+
+    // 4. Check DB expiration
+    if (new Date(storedToken.expires_at) <= new Date()) {
+      await client.query(
+        `DELETE FROM refresh_tokens
+         WHERE token = $1`,
+        [token]
+      );
+
+      await client.query("COMMIT");
+
+      return res.status(401).json({
+        error: "Refresh token expired"
+      });
+    }
+
+    // 5. Get user's current role from DB
+    const { rows: users } = await client.query(
+      `SELECT id, role_id
+       FROM users
+       WHERE id = $1`,
+      [payload.userId]
+    );
+
+    if (users.length === 0) {
+      await client.query("ROLLBACK");
+
+      return res.status(401).json({
+        error: "User not found"
+      });
+    }
+
+    const user = users[0];
+
+    // 6. Revoke OLD refresh token
+    await client.query(
+      `DELETE FROM refresh_tokens
+       WHERE token = $1`,
+      [token]
+    );
+
+    // 7. Create NEW access token WITH roleId
+    const accessToken = signAccessToken({
+      userId: user.id,
+      roleId: user.role_id
+    });
+
+    // 8. Create NEW refresh token
+    const refresh = await signRefreshToken(user.id, client);
+
+    await client.query("COMMIT");
+
+    // 9. Return new token pair
+    return res.json({
+      accessToken,
+      refreshToken: refresh
+    });
+
   } catch (err) {
-    console.error('refresh error', err);
-    res.status(401).json({ error: 'Invalid refresh token' });
+    await client.query("ROLLBACK");
+
+    console.error("refresh error", err);
+
+    return res.status(401).json({
+      error: "Invalid refresh token"
+    });
+
+  } finally {
+    client.release();
   }
 };
-
 export const logout = async (req, res) => {
   try {
     const { token } = req.body; // client sends refresh token to revoke

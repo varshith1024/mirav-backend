@@ -15,14 +15,14 @@ export const signAccessToken = (payload) => {
 // =============================
 // ✅ REFRESH TOKEN (7 days)
 // =============================
-export const signRefreshToken = async (userId) => {
+export const signRefreshToken = async (userId, db = pool) => {
   const token = jwt.sign(
     { userId },
     process.env.JWT_REFRESH_SECRET,
     { expiresIn: "7d" }
   );
 
-  await pool.query(
+  await db.query(
     `INSERT INTO refresh_tokens (user_id, token, expires_at)
      VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
     [userId, token]
